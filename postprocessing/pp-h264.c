@@ -1,7 +1,7 @@
 /*! \file    pp-h264.c
  * \author   Lorenzo Miniero <lorenzo@meetecho.com>
  * \copyright GNU General Public License v3
- * \brief    Post-processing to generate .mp4 files
+ * \brief    Post-processing to generate .mp4 files out of H.264 frames
  * \details  Implementation of the post-processing code (based on FFmpeg)
  * needed to generate .mp4 files out of H.264 RTP frames.
  *
@@ -10,7 +10,7 @@
  */
 
 #include <arpa/inet.h>
-#ifdef __MACH__
+#if defined(__MACH__) || defined(__FreeBSD__)
 #include <machine/endian.h>
 #else
 #include <endian.h>
@@ -288,10 +288,10 @@ int janus_pp_h264_preprocess(FILE *file, janus_pp_frame_packet *list) {
 			JANUS_LOG(LOG_VERB, "Parsing width/height\n");
 			int width = 0, height = 0;
 			janus_pp_h264_parse_sps(prebuffer, &width, &height);
-			if(width > max_width)
+			if(width*height > max_width*max_height) {
 				max_width = width;
-			if(height > max_height)
 				max_height = height;
+			}
 		} else if((prebuffer[0] & 0x1F) == 24) {
 			/* May we find an SPS in this STAP-A? */
 			JANUS_LOG(LOG_HUGE, "Parsing STAP-A...\n");
@@ -310,10 +310,10 @@ int janus_pp_h264_preprocess(FILE *file, janus_pp_frame_packet *list) {
 					JANUS_LOG(LOG_VERB, "Parsing width/height\n");
 					int width = 0, height = 0;
 					janus_pp_h264_parse_sps(buffer, &width, &height);
-					if(width > max_width)
+					if(width*height > max_width*max_height) {
 						max_width = width;
-					if(height > max_height)
 						max_height = height;
+					}
 				}
 				buffer += psize;
 				tot -= psize;

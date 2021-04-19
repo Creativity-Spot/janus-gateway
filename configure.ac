@@ -1,4 +1,4 @@
-AC_INIT([Janus WebRTC Server],[0.9.5],[https://github.com/meetecho/janus-gateway],[janus-gateway],[https://janus.conf.meetecho.com])
+AC_INIT([Janus WebRTC Server],[0.11.2],[https://github.com/meetecho/janus-gateway],[janus-gateway],[https://janus.conf.meetecho.com])
 AC_LANG(C)
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
@@ -51,11 +51,17 @@ CFLAGS="$CFLAGS \
 	-Wstrict-prototypes \
 	-Wswitch-default \
 	-Wunused \
-	-Wwrite-strings"
+	-Wwrite-strings \
+	-Werror=implicit-function-declaration"
 
 case "$CC" in
 clang*)
 	# Specific clang flags
+	CFLAGS="$CFLAGS \
+		-Wno-cast-align \
+		-Wno-initializer-overrides"
+;;
+cc*)
 	CFLAGS="$CFLAGS \
 		-Wno-cast-align \
 		-Wno-initializer-overrides"
@@ -69,9 +75,9 @@ clang*)
 		-Wunused-but-set-variable"
 esac
 
-JANUS_VERSION=95
+JANUS_VERSION=112
 AC_SUBST(JANUS_VERSION)
-JANUS_VERSION_STRING="0.9.5"
+JANUS_VERSION_STRING="0.11.2"
 AC_SUBST(JANUS_VERSION_STRING)
 
 case "$host_os" in
@@ -81,6 +87,12 @@ darwin*)
 	LDFLAGS="$LDFLAGS -Wl,-export_dynamic"
 	LDFLAGS="$LDFLAGS -L/usr/local/lib -L/usr/local/opt/openssl/lib -L/opt/local/lib -L/usr/local/libsrtp/lib"
 	AM_CONDITIONAL([DARWIN_OS], true)
+;;
+freebsd*)
+	CFLAGS="$CFLAGS -I/usr/include/openssl"
+	LDFLAGS="$LDFLAGS -Xlinker --export-dynamic"
+	LDFLAGS="$LDFLAGS -L/usr/lib/openssl -lcrypto -lssl -L/usr/local/lib"
+	AM_CONDITIONAL([DARWIN_OS], false)
 ;;
 *)
 	LDFLAGS="$LDFLAGS -Wl,--export-dynamic"
@@ -214,6 +226,8 @@ AC_ARG_ENABLE([all-handlers],
                      [enable_mqtt_event_handler=no])
                AS_IF([test "x$enable_nanomsg_event_handler" != "xyes"],
                      [enable_nanomsg_event_handler=no])
+               AS_IF([test "x$enable_gelf_event_handler" != "xyes"],
+                     [enable_gelf_event_handler=no])
               ],
               [])
 
@@ -314,6 +328,13 @@ AC_ARG_ENABLE([nanomsg-event-handler],
                      [enable_nanomsg_event_handler=no])],
               [enable_nanomsg_event_handler=maybe])
 
+AC_ARG_ENABLE([gelf-event-handler],
+              [AS_HELP_STRING([--disable-gelf-event-handler],
+                              [Disable gelf event handler ])],
+              [AS_IF([test "x$enable_gelf_event_handler" != "xyes"],
+                     [enable_gelf_event_handler=no])],
+              [enable_gelf_event_handler=yes])
+
 AC_ARG_ENABLE([json-logger],
               [AS_HELP_STRING([--enable-json-logger],
                               [Enable external JSON file logger ])],
@@ -327,17 +348,27 @@ AC_ARG_ENABLE([systemd-sockets],
               [],
               [enable_systemd_sockets=no])
 
-PKG_CHECK_MODULES([JANUS],
-                  [
-                    glib-2.0 >= $glib_version
+case "$host_os" in
+freebsd*)
+	PKGCHECKMODULES="glib-2.0 >= $glib_version
+                    gio-2.0 >= $glib_version
+                    libconfig
+                    nice
+                    jansson >= $jansson_version
+                    zlib"
+;;
+*)
+	PKGCHECKMODULES="glib-2.0 >= $glib_version
                     gio-2.0 >= $glib_version
                     libconfig
                     nice
                     jansson >= $jansson_version
                     libssl >= $ssl_version
                     libcrypto
-                    zlib
-                  ])
+                    zlib"
+esac
+PKG_CHECK_MODULES([JANUS],"$PKGCHECKMODULES")
+
 JANUS_MANUAL_LIBS="${JANUS_MANUAL_LIBS} -lm"
 AC_SUBST(JANUS_MANUAL_LIBS)
 
@@ -384,6 +415,18 @@ AC_CHECK_LIB([nice],
              [nice_address_equal_no_port],
              [AC_DEFINE(HAVE_LIBNICE_TCP)],
              [AC_MSG_NOTICE([libnice version does not support TCP candidates])]
+             )
+
+AC_CHECK_LIB([nice],
+             [nice_agent_close_async],
+             [AC_DEFINE(HAVE_CLOSE_ASYNC)],
+             [AC_MSG_NOTICE([libnice version does not have nice_agent_close_async])]
+             )
+
+AC_CHECK_LIB([nice],
+             [nice_agent_new_full],
+             [AC_DEFINE(HAVE_ICE_NOMINATION)],
+             [AC_MSG_NOTICE([libnice version does not have nice_agent_new_full])]
              )
 
 AC_CHECK_LIB([dl],
@@ -470,10 +513,16 @@ AM_CONDITIONAL([ENABLE_DOCS], [test "x$enable_docs" = "xyes"])
 if test "x$enable_docs" = "xyes"; then
 	doxygen_version=$($DOXYGEN --version)
 	AS_VERSION_COMPARE([$doxygen_version], [1.8.11],
-					   [],
-					   [],
-					   [AC_MSG_ERROR([Doxygen $doxygen_version too new: versions higher than 1.8.11 are known to render poorly.])]
-					  )
+                           [],
+                           [],
+                           [
+                            AS_VERSION_COMPARE([$doxygen_version], [1.8.14],
+                                               [AC_MSG_ERROR([Doxygen $doxygen_version not usable: versions between 1.8.12 and 1.8.14 are known to render poorly.])],
+                                               [],
+                                               []
+                                              )
+                           ]
+                          )
 fi
 
 AC_CHECK_PROG([GENGETOPT_CHECK],
@@ -507,6 +556,13 @@ PKG_CHECK_MODULES([MHD],
 AC_SUBST([MHD_CFLAGS])
 AC_SUBST([MHD_LIBS])
 AM_CONDITIONAL([ENABLE_REST], [test "x$enable_rest" = "xyes"])
+AM_COND_IF([ENABLE_REST],
+           [
+             AC_CHECK_TYPES([enum MHD_Result],
+                            [],
+                            [],
+                            [#include <microhttpd.h>])
+           ])
 
 AC_CHECK_LIB([websockets],
 			 [lws_create_vhost],
@@ -524,6 +580,7 @@ AC_CHECK_LIB([websockets],
                AS_IF([test "x$enable_websockets_event_handler" != "xno"],
                [
                  AC_DEFINE(HAVE_WSEVH)
+                 WS_MANUAL_LIBS="-lwebsockets"
                  enable_websockets_event_handler=yes
                ])
 			 ],
@@ -601,6 +658,7 @@ AM_CONDITIONAL([ENABLE_MQTT], [test "x$enable_mqtt" = "xyes"])
 AM_CONDITIONAL([ENABLE_MQTTEVH], [test "x$enable_mqtt_event_handler" = "xyes"])
 AM_CONDITIONAL([ENABLE_NANOMSG], [test "x$enable_nanomsg" = "xyes"])
 AM_CONDITIONAL([ENABLE_NANOMSGEVH], [test "x$enable_nanomsg_event_handler" = "xyes"])
+AM_CONDITIONAL([ENABLE_GELFEVH], [test "x$enable_gelf_event_handler" = "xyes"])
 
 AM_CONDITIONAL([ENABLE_JSONLOGGER], [test "x$enable_json_logger" = "xyes"])
 
@@ -1034,6 +1092,9 @@ AM_COND_IF([ENABLE_MQTTEVH],
 AM_COND_IF([ENABLE_NANOMSGEVH],
 	[echo "    Nanomsg event handler: yes"],
 	[echo "    Nanomsg event handler: no"])
+AM_COND_IF([ENABLE_GELFEVH],
+	[echo "    GELF event handler:    yes"],
+	[echo "    GELF event handler:    no"])
 echo "External loggers:"
 AM_COND_IF([ENABLE_JSONLOGGER],
 	[echo "    JSON file logger:      yes"],

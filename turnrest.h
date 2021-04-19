@@ -31,8 +31,9 @@ void janus_turnrest_deinit(void);
  * @param server The REST API server address (pass NULL to disable the
  * TURN REST API entirely)
  * @param key The API key, if any (pass NULL if it's not required)
- * @param method The HTTP method to use, POST or GET (NULL means POST) */
-void janus_turnrest_set_backend(const char *server, const char *key, const char *method);
+ * @param method The HTTP method to use, POST or GET (NULL means POST)
+ * @param timeout The timeout in seconds */
+void janus_turnrest_set_backend(const char *server, const char *key, const char *method, const uint timeout);
 /*! \brief Get the currently set TURN REST API backend
  * @returns The currently set TURN REST API backend */
 const char *janus_turnrest_get_backend(void);
@@ -66,8 +67,9 @@ void janus_turnrest_response_destroy(janus_turnrest_response *response);
 
 /*! \brief Retrieve address and credentials for one or more TURN servers
  * @note Use janus_turnrest_response_destroy to get rid of the response, once done
+ * @param[in] user Username to provide in the TURN REST API request
  * @returns A valid janus_turnrest_response instance, if successful, NULL otherwise */
-janus_turnrest_response *janus_turnrest_request(void);
+janus_turnrest_response *janus_turnrest_request(const char *user);
 
 #endif
 

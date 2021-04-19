@@ -31,6 +31,7 @@
 static const char *api_server = NULL;
 static const char *api_key = NULL;
 static gboolean api_http_get = FALSE;
+static uint api_timeout;
 static janus_mutex api_mutex = JANUS_MUTEX_INITIALIZER;
 
 
@@ -69,7 +70,7 @@ void janus_turnrest_deinit(void) {
 	janus_mutex_unlock(&api_mutex);
 }
 
-void janus_turnrest_set_backend(const char *server, const char *key, const char *method) {
+void janus_turnrest_set_backend(const char *server, const char *key, const char *method, const uint timeout) {
 	janus_mutex_lock(&api_mutex);
 
 	/* Get rid of the old values first */
@@ -93,6 +94,7 @@ void janus_turnrest_set_backend(const char *server, const char *key, const char 
 				api_http_get = FALSE;
 			}
 		}
+		api_timeout = timeout;
 	}
 	janus_mutex_unlock(&api_mutex);
 }
@@ -115,9 +117,10 @@ void janus_turnrest_response_destroy(janus_turnrest_response *response) {
 	g_free(response->username);
 	g_free(response->password);
 	g_list_free_full(response->servers, janus_turnrest_instance_destroy);
+	g_free(response);
 }
 
-janus_turnrest_response *janus_turnrest_request(void) {
+janus_turnrest_response *janus_turnrest_request(const char *user) {
 	janus_mutex_lock(&api_mutex);
 	if(api_server == NULL) {
 		janus_mutex_unlock(&api_mutex);
@@ -130,11 +133,20 @@ janus_turnrest_response *janus_turnrest_request(void) {
 		/* Note: we've been using 'api' as a query string parameter for
 		 * a while, but the expired draft this implementation follows
 		 * suggested 'key' instead: as such, we send them both
-		 * See https://github.com/meetecho/janus-gateway/issues/1416*/
+		 * See https://github.com/meetecho/janus-gateway/issues/1416 */
 		char buffer[256];
 		g_snprintf(buffer, 256, "&api=%s", api_key);
 		g_strlcat(query_string, buffer, 512);
 		g_snprintf(buffer, 256, "&key=%s", api_key);
+		g_strlcat(query_string, buffer, 512);
+	}
+	if(user != NULL) {
+		/* Note: 'username' is supposedly optional, but a commonly used
+		 * TURN REST API server implementation requires it. As such, we
+		 * now send that too, letting the Janus core tell us what to use
+		 * See https://github.com/meetecho/janus-gateway/issues/2199 */
+		char buffer[256];
+		g_snprintf(buffer, 256, "&username=%s", user);
 		g_strlcat(query_string, buffer, 512);
 	}
 	char request_uri[1024];
@@ -154,7 +166,7 @@ janus_turnrest_response *janus_turnrest_request(void) {
 		/* FIXME Some servers don't like a POST with no data */
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, query_string);
 	}
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);	/* FIXME Max 10 seconds */
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, api_timeout);
 	/* For getting data, we use an helper struct and the libcurl callback */
 	janus_turnrest_buffer data;
 	data.buffer = g_malloc0(1);

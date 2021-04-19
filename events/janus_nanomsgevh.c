@@ -230,6 +230,7 @@ int janus_nanomsgevh_init(const char *config_path) {
 		g_atomic_int_set(&initialized, 0);
 		JANUS_LOG(LOG_FATAL, "Got error %d (%s) trying to launch the NanomsgEventHandler loop thread...\n",
 			error->code, error->message ? error->message : "??");
+		g_error_free(error);
 		goto error;
 	}
 	error = NULL;
@@ -238,6 +239,7 @@ int janus_nanomsgevh_init(const char *config_path) {
 		g_atomic_int_set(&initialized, 0);
 		JANUS_LOG(LOG_FATAL, "Got error %d (%s) trying to launch the NanomsgEventHandler handler thread...\n",
 			error->code, error->message ? error->message : "??");
+		g_error_free(error);
 		goto error;
 	}
 
@@ -431,6 +433,13 @@ static void *janus_nanomsgevh_handler(void *data) {
 		if(!g_atomic_int_get(&stopping)) {
 			/* Since this a simple plugin, it does the same for all events: so just convert to string... */
 			event_text = json_dumps(output, json_format);
+			if(event_text == NULL) {
+				JANUS_LOG(LOG_WARN, "Failed to stringify event, event lost...\n");
+				/* Nothing we can do... get rid of the event */
+				json_decref(output);
+				output = NULL;
+				continue;
+			}
 			g_async_queue_push(nfd_queue, event_text);
 			(void)nn_send(write_nfd[1], "x", 1, 0);
 		}

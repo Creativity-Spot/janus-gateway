@@ -261,7 +261,9 @@ int janus_sampleevh_init(const char *config_path) {
 	handler_thread = g_thread_try_new("janus sampleevh handler", janus_sampleevh_handler, NULL, &error);
 	if(error != NULL) {
 		g_atomic_int_set(&initialized, 0);
-		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the SampleEventHandler handler thread...\n", error->code, error->message ? error->message : "??");
+		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the SampleEventHandler handler thread...\n",
+			error->code, error->message ? error->message : "??");
+		g_error_free(error);
 		return -1;
 	}
 	JANUS_LOG(LOG_INFO, "%s initialized!\n", JANUS_SAMPLEEVH_NAME);
@@ -372,7 +374,7 @@ json_t *janus_sampleevh_handle_request(json_t *request) {
 		if(json_object_get(request, "compress"))
 			req_compress = json_is_true(json_object_get(request, "compress"));
 		if(json_object_get(request, "compression"))
-			req_compress = json_integer_value(json_object_get(request, "compression"));
+			req_compression = json_integer_value(json_object_get(request, "compression"));
 		/* Backend stuff */
 		if(json_object_get(request, "backend"))
 			req_backend = json_string_value(json_object_get(request, "backend"));
@@ -661,6 +663,7 @@ static void *janus_sampleevh_handler(void *data) {
 							   }
 							}
 						*/
+						break;
 					case JANUS_EVENT_TYPE_EXTERNAL:
 						/* This is an external event, not originated by Janus itself
 						 * or any of its plugins, but from an ad-hoc Admin API request
@@ -706,6 +709,13 @@ static void *janus_sampleevh_handler(void *data) {
 
 			/* Since this a simple plugin, it does the same for all events: so just convert to string... */
 			event_text = json_dumps(output, json_format);
+			if(event_text == NULL) {
+				JANUS_LOG(LOG_WARN, "Failed to stringify event, event lost...\n");
+				/* Nothing we can do... get rid of the event */
+				json_decref(output);
+				output = NULL;
+				continue;
+			}
 		}
 		/* Whether we just prepared the event or this is a retransmission, send it via HTTP POST */
 		CURLcode res;
@@ -731,7 +741,7 @@ static void *janus_sampleevh_handler(void *data) {
 			if(compressed_len == 0) {
 				JANUS_LOG(LOG_ERR, "Failed to compress event (%zu bytes)...\n", strlen(event_text));
 				/* Nothing we can do... get rid of the event */
-				g_free(event_text);
+				free(event_text);
 				json_decref(output);
 				output = NULL;
 				continue;
@@ -775,7 +785,7 @@ done:
 		if(headers)
 			curl_slist_free_all(headers);
 		if(!retransmit)
-			g_free(event_text);
+			free(event_text);
 
 		/* Done, let's unref the event */
 		json_decref(output);
